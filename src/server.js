@@ -34,7 +34,7 @@ const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
 // -----------------------------------------------------------------------------
 // MIDDLEWARE
 // -----------------------------------------------------------------------------
-app.disable('x-powered-by');
+app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({
   origin(origin, callback) {
