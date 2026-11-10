@@ -15,7 +15,7 @@ const PORT = Number(process.env.PORT) || 3000;
 // ENVIRONMENT / DATABASE
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const configuredOrigins = (process.env.CORS_ORIGIN || '*')
   .split(',')
   .map(value => value.trim())
@@ -23,6 +23,18 @@ const configuredOrigins = (process.env.CORS_ORIGIN || '*')
 
 const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+        detectSessionInUrl: false
+      }
+    })
+  : null;
+
+// Separate client for admin email/password login
+
+const authClient = SUPABASE_URL && SUPABASE_ANON_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: {
         autoRefreshToken: false,
         persistSession: false,
@@ -232,7 +244,110 @@ async function requireAdmin(req, res, next) {
   }
 }
 
- 
+// -----------------------------------------------------------------------------
+// ADMIN LOGIN API
+// -----------------------------------------------------------------------------
+
+app.post('/api/admin/login', async (req, res) => {
+
+  if (!authClient || !supabase) {
+    return res.status(503).json({
+      success: false,
+      error: 'Supabase configuration missing.'
+    });
+  }
+
+  const email = cleanText(req.body?.email, 254).toLowerCase();
+  const password = String(req.body?.password || '');
+
+  if (!email || !password) {
+    return res.status(400).json({
+      success: false,
+      error: 'ইমেইল ও পাসওয়ার্ড দিতে হবে।'
+    });
+  }
+
+  try {
+    // Supabase email/password authentication
+    const { data, error } =
+      await authClient.auth.signInWithPassword({
+        email,
+        password
+      });
+
+    if (error || !data?.user || !data?.session) {
+      return res.status(401).json({
+        success: false,
+        error: 'ইমেইল অথবা পাসওয়ার্ড সঠিক নয়।'
+      });
+    }
+
+    // Verify admin profile
+    const { data: profile, error: profileError } = await supabase
+      .from('admin_profiles')
+      .select('role, is_active')
+      .eq('user_id', data.user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      console.error('Admin profile error:', profileError.message);
+
+      return res.status(500).json({
+        success: false,
+        error: 'Admin permission যাচাই করা যায়নি।'
+      });
+    }
+
+    if (
+      !profile ||
+      profile.is_active !== true ||
+      !['admin', 'owner', 'super_admin'].includes(profile.role)
+    ) {
+      return res.status(403).json({
+        success: false,
+        error: 'এই অ্যাকাউন্টের Admin permission নেই।'
+      });
+    }
+
+    // Successful login response
+    return res.json({
+      success: true,
+      message: 'Login successful.',
+
+      user: {
+        id: data.user.id,
+        email: data.user.email || null
+      },
+
+      profile: {
+        role: profile.role,
+        is_active: profile.is_active
+      },
+
+      session: {
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+        expires_at: data.session.expires_at,
+        expires_in: data.session.expires_in,
+        token_type: data.session.token_type
+      }
+    });
+
+  } catch (error) {
+    console.error(
+      'Admin login error:',
+      error?.message || error
+    );
+
+    return res.status(500).json({
+      success: false,
+      error: 'Login করার সময় সার্ভারে সমস্যা হয়েছে।'
+    });
+  }
+
+});
+
+
 // -----------------------------------------------------------------------------
 // ADMIN: CURRENT AUTHENTICATED PROFILE
 // -----------------------------------------------------------------------------
