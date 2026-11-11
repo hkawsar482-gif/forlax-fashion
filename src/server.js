@@ -1,4 +1,3 @@
-
 'use strict';
 
 require('dotenv').config();
@@ -70,18 +69,38 @@ app.use(cors({
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
+// General limiter: public storefront routes AND the admin login route.
+// Admin routes (except login) are handled by the separate, higher limiter
+// below, because the Admin Panel polls the API every few seconds.
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 200,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
+  skip: req => req.path.startsWith('/admin/') && req.path !== '/admin/login',
   message: {
     success: false,
-    error: 'অনেকবার অনুরোধ করা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন।'
+    error: 'অনেকবার অনুরোধ করা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন।'
+  }
+});
+
+const adminApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 1500,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: 'অনেকবার অনুরোধ করা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন।'
   }
 });
 
 app.use('/api', apiLimiter);
+
+app.use('/api/admin', (req, res, next) => {
+  if (req.path === '/login') return next();
+  return adminApiLimiter(req, res, next);
+});
 
 // HELPERS
 function requireDatabase(res) {
@@ -89,7 +108,7 @@ function requireDatabase(res) {
 
   res.status(503).json({
     success: false,
-    error: 'সার্ভারের Database সেটআপ সম্পন্ন হয়নি। Render Environment Variables পরীক্ষা করুন।'
+    error: 'সার্ভারের Database সেটআপ সম্পন্ন হয়নি। Render Environment Variables পরীক্ষা করুন।'
   });
 
   return false;
@@ -168,6 +187,26 @@ function sendDatabaseError(res, label, error) {
     success: false,
     error: label
   });
+}
+
+// Shared by the product, order-update and good-customer routes below.
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(value) {
+  return UUID_REGEX.test(String(value ?? ''));
+}
+
+function parseMoney(value) {
+  if (value === undefined || value === null) return null;
+
+  const text = String(value).trim();
+
+  if (text === '') return null;
+
+  const number = Number(text);
+
+  return Number.isFinite(number) ? number : NaN;
 }
 
 // AUTHENTICATION
@@ -263,7 +302,7 @@ app.post('/api/admin/login', async (req, res) => {
   if (!email || !password) {
     return res.status(400).json({
       success: false,
-      error: 'ইমেইল ও পাসওয়ার্ড দিতে হবে।'
+      error: 'ইমেইল ও পাসওয়ার্ড দিতে হবে।'
     });
   }
 
@@ -278,7 +317,7 @@ app.post('/api/admin/login', async (req, res) => {
     if (error || !data?.user || !data?.session) {
       return res.status(401).json({
         success: false,
-        error: 'ইমেইল অথবা পাসওয়ার্ড সঠিক নয়।'
+        error: 'ইমেইল অথবা পাসওয়ার্ড সঠিক নয়।'
       });
     }
 
@@ -294,7 +333,7 @@ app.post('/api/admin/login', async (req, res) => {
 
       return res.status(500).json({
         success: false,
-        error: 'Admin permission যাচাই করা যায়নি।'
+        error: 'Admin permission যাচাই করা যায়নি।'
       });
     }
 
@@ -341,7 +380,7 @@ app.post('/api/admin/login', async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: 'Login করার সময় সার্ভারে সমস্যা হয়েছে।'
+      error: 'Login করার সময় সার্ভারে সমস্যা হয়েছে।'
     });
   }
 
@@ -386,7 +425,7 @@ app.get('/api/admin/poll-new-orders', requireAdmin, async (req, res) => {
     if (error) {
       return sendDatabaseError(
         res,
-        'নতুন অর্ডার চেক করা যায়নি।',
+        'নতুন অর্ডার চেক করা যায়নি।',
         error
       );
     }
@@ -399,7 +438,7 @@ app.get('/api/admin/poll-new-orders', requireAdmin, async (req, res) => {
   } catch (error) {
     return sendDatabaseError(
       res,
-      'নতুন অর্ডার চেক করা যায়নি।',
+      'নতুন অর্ডার চেক করা যায়নি।',
       error
     );
   }
@@ -517,7 +556,7 @@ app.get('/api/store-data', async (req, res) => {
     if (contentResult.error) {
       return sendDatabaseError(
         res,
-        'ওয়েবসাইটের সেটিংস লোড করা যায়নি।',
+        'ওয়েবসাইটের সেটিংস লোড করা যায়নি।',
         contentResult.error
       );
     }
@@ -525,7 +564,7 @@ app.get('/api/store-data', async (req, res) => {
     if (productsResult.error) {
       return sendDatabaseError(
         res,
-        'পণ্যের তালিকা লোড করা যায়নি।',
+        'পণ্যের তালিকা লোড করা যায়নি।',
         productsResult.error
       );
     }
@@ -533,7 +572,7 @@ app.get('/api/store-data', async (req, res) => {
     if (deliveryResult.error) {
       return sendDatabaseError(
         res,
-        'ডেলিভারি সেটিংস লোড করা যায়নি।',
+        'ডেলিভারি সেটিংস লোড করা যায়নি।',
         deliveryResult.error
       );
     }
@@ -577,6 +616,44 @@ app.get('/api/store-data', async (req, res) => {
   }
 });
 
+
+// -----------------------------------------------------------------------------
+// PUBLIC: GOOD CUSTOMER SUMMARY (AGGREGATE ONLY - NO PERSONAL DATA)
+// -----------------------------------------------------------------------------
+
+app.get('/api/good-customers-summary', async (req, res) => {
+  if (!requireDatabase(res)) return;
+
+  try {
+    const { count, error } = await supabase
+      .from('customers')
+      .select('id', { count: 'exact', head: true })
+      .eq('is_good_customer', true);
+
+    if (error) {
+      return sendDatabaseError(
+        res,
+        'Good customer summary লোড করা যায়নি।',
+        error
+      );
+    }
+
+    res.set('Cache-Control', 'public, max-age=60');
+
+    return res.json({
+      success: true,
+      good_customer_count: count || 0
+    });
+
+  } catch (error) {
+    return sendDatabaseError(
+      res,
+      'Good customer summary লোড করা যায়নি।',
+      error
+    );
+  }
+});
+
 // -----------------------------------------------------------------------------
 // INCOMPLETE ORDER LEAD
 // -----------------------------------------------------------------------------
@@ -592,7 +669,7 @@ app.post('/api/incomplete-order', async (req, res) => {
   if (customerPhone.length !== 11) {
     return res.status(400).json({
       success: false,
-      error: 'সঠিক ১১ ডিজিটের মোবাইল নম্বর প্রয়োজন।'
+      error: 'সঠিক ১১ ডিজিটের মোবাইল নম্বর প্রয়োজন।'
     });
   }
 
@@ -611,7 +688,7 @@ app.post('/api/incomplete-order', async (req, res) => {
     if (error) {
       return sendDatabaseError(
         res,
-        'অসম্পূর্ণ অর্ডার সংরক্ষণ করা যায়নি।',
+        'অসম্পূর্ণ অর্ডার সংরক্ষণ করা যায়নি।',
         error
       );
     }
@@ -624,7 +701,7 @@ app.post('/api/incomplete-order', async (req, res) => {
   } catch (error) {
     return sendDatabaseError(
       res,
-      'অসম্পূর্ণ অর্ডার সংরক্ষণ করা যায়নি।',
+      'অসম্পূর্ণ অর্ডার সংরক্ষণ করা যায়নি।',
       error
     );
   }
@@ -654,21 +731,21 @@ app.post('/api/checkout', async (req, res) => {
   if (!customerName) {
     return res.status(400).json({
       success: false,
-      error: 'কাস্টমারের নাম প্রয়োজন।'
+      error: 'কাস্টমারের নাম প্রয়োজন।'
     });
   }
 
   if (customerPhone.length !== 11) {
     return res.status(400).json({
       success: false,
-      error: 'সঠিক ১১ ডিজিটের মোবাইল নম্বর প্রয়োজন।'
+      error: 'সঠিক ১১ ডিজিটের মোবাইল নম্বর প্রয়োজন।'
     });
   }
 
   if (!shippingDistrict || !shippingAddress) {
     return res.status(400).json({
       success: false,
-      error: 'ডেলিভারি এলাকা ও সম্পূর্ণ ঠিকানা প্রয়োজন।'
+      error: 'ডেলিভারি এলাকা ও সম্পূর্ণ ঠিকানা প্রয়োজন।'
     });
   }
 
@@ -696,7 +773,7 @@ app.post('/api/checkout', async (req, res) => {
       if (existingError) {
         return sendDatabaseError(
           res,
-          'আগের অর্ডার যাচাই করা যায়নি।',
+          'আগের অর্ডার যাচাই করা যায়নি।',
           existingError
         );
       }
@@ -733,7 +810,7 @@ app.post('/api/checkout', async (req, res) => {
       ) {
         return res.status(400).json({
           success: false,
-          error: 'একটি পণ্যের নাম, সাইজ অথবা পরিমাণ সঠিক নয়।'
+          error: 'একটি পণ্যের নাম, সাইজ অথবা পরিমাণ সঠিক নয়।'
         });
       }
 
@@ -763,7 +840,7 @@ app.post('/api/checkout', async (req, res) => {
     if (productsError) {
       return sendDatabaseError(
         res,
-        'পণ্যের দাম যাচাই করা যায়নি।',
+        'পণ্যের দাম যাচাই করা যায়নি।',
         productsError
       );
     }
@@ -789,7 +866,7 @@ app.post('/api/checkout', async (req, res) => {
       return res.status(409).json({
         success: false,
         error:
-          `পণ্যটি Products তালিকায় পাওয়া যায়নি: ${missingProduct}।`
+          `পণ্যটি Products তালিকায় পাওয়া যায়নি: ${missingProduct}।`
       });
     }
 
@@ -859,7 +936,7 @@ app.post('/api/checkout', async (req, res) => {
     if (deliveryError) {
       return sendDatabaseError(
         res,
-        'ডেলিভারি চার্জ পাওয়া যায়নি।',
+        'ডেলিভারি চার্জ পাওয়া যায়নি।',
         deliveryError
       );
     }
@@ -898,7 +975,7 @@ app.post('/api/checkout', async (req, res) => {
     if (customerLookupError) {
       return sendDatabaseError(
         res,
-        'কাস্টমারের তথ্য যাচাই করা যায়নি।',
+        'কাস্টমারের তথ্য যাচাই করা যায়নি।',
         customerLookupError
       );
     }
@@ -914,7 +991,7 @@ app.post('/api/checkout', async (req, res) => {
       if (customerUpdateError) {
         return sendDatabaseError(
           res,
-          'কাস্টমারের তথ্য আপডেট করা যায়নি।',
+          'কাস্টমারের তথ্য আপডেট করা যায়নি।',
           customerUpdateError
         );
       }
@@ -943,7 +1020,7 @@ app.post('/api/checkout', async (req, res) => {
           if (retry.error) {
             return sendDatabaseError(
               res,
-              'কাস্টমারের তথ্য পাওয়া যায়নি।',
+              'কাস্টমারের তথ্য পাওয়া যায়নি।',
               retry.error
             );
           }
@@ -953,7 +1030,7 @@ app.post('/api/checkout', async (req, res) => {
         } else {
           return sendDatabaseError(
             res,
-            'কাস্টমারের তথ্য তৈরি করা যায়নি।',
+            'কাস্টমারের তথ্য তৈরি করা যায়নি।',
             customerInsertError
           );
         }
@@ -1011,7 +1088,7 @@ app.post('/api/checkout', async (req, res) => {
 
       return sendDatabaseError(
         res,
-        'অর্ডার তৈরি করা যায়নি।',
+        'অর্ডার তৈরি করা যায়নি।',
         orderError
       );
     }
@@ -1043,7 +1120,7 @@ app.post('/api/checkout', async (req, res) => {
 
       return sendDatabaseError(
         res,
-        'অর্ডারের পণ্য সংরক্ষণ করা যায়নি।',
+        'অর্ডারের পণ্য সংরক্ষণ করা যায়নি।',
         itemsError
       );
     }
@@ -1092,7 +1169,7 @@ app.post('/api/checkout', async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: 'অর্ডার প্রসেস করতে সার্ভারে সমস্যা হয়েছে।'
+      error: 'অর্ডার প্রসেস করতে সার্ভারে সমস্যা হয়েছে।'
     });
   }
 });
@@ -1110,7 +1187,7 @@ app.get('/api/admin/metrics', requireAdmin, async (req, res) => {
     if (error) {
       return sendDatabaseError(
         res,
-        'Dashboard metrics লোড করা যায়নি।',
+        'Dashboard metrics লোড করা যায়নি।',
         error
       );
     }
@@ -1150,7 +1227,7 @@ app.get('/api/admin/metrics', requireAdmin, async (req, res) => {
   } catch (error) {
     return sendDatabaseError(
       res,
-      'Dashboard metrics লোড করা যায়নি।',
+      'Dashboard metrics লোড করা যায়নি।',
       error
     );
   }
@@ -1209,7 +1286,7 @@ app.get('/api/admin/orders', requireAdmin, async (req, res) => {
     if (error) {
       return sendDatabaseError(
         res,
-        'অর্ডারের তালিকা লোড করা যায়নি।',
+        'অর্ডারের তালিকা লোড করা যায়নি।',
         error
       );
     }
@@ -1228,7 +1305,7 @@ app.get('/api/admin/orders', requireAdmin, async (req, res) => {
   } catch (error) {
     return sendDatabaseError(
       res,
-      'অর্ডারের তালিকা লোড করা যায়নি।',
+      'অর্ডারের তালিকা লোড করা যায়নি।',
       error
     );
   }
@@ -1286,7 +1363,7 @@ app.patch('/api/admin/orders/:id/status', requireAdmin, async (req, res) => {
     if (error) {
       return sendDatabaseError(
         res,
-        'অর্ডারের Status আপডেট করা যায়নি।',
+        'অর্ডারের Status আপডেট করা যায়নি।',
         error
       );
     }
@@ -1306,7 +1383,7 @@ app.patch('/api/admin/orders/:id/status', requireAdmin, async (req, res) => {
   } catch (error) {
     return sendDatabaseError(
       res,
-      'অর্ডারের Status আপডেট করা যায়নি।',
+      'অর্ডারের Status আপডেট করা যায়নি।',
       error
     );
   }
@@ -1333,7 +1410,7 @@ app.post('/api/admin/orders/update-status', requireAdmin, async (req, res) => {
   if (!orderId || !allowedStatuses.includes(status)) {
     return res.status(400).json({
       success: false,
-      error: 'অর্ডার ID অথবা Status সঠিক নয়।'
+      error: 'অর্ডার ID অথবা Status সঠিক নয়।'
     });
   }
 
@@ -1350,7 +1427,7 @@ app.post('/api/admin/orders/update-status', requireAdmin, async (req, res) => {
     if (error) {
       return sendDatabaseError(
         res,
-        'অর্ডারের Status আপডেট করা যায়নি।',
+        'অর্ডারের Status আপডেট করা যায়নি।',
         error
       );
     }
@@ -1370,7 +1447,7 @@ app.post('/api/admin/orders/update-status', requireAdmin, async (req, res) => {
   } catch (error) {
     return sendDatabaseError(
       res,
-      'অর্ডারের Status আপডেট করা যায়নি।',
+      'অর্ডারের Status আপডেট করা যায়নি।',
       error
     );
   }
@@ -1435,7 +1512,7 @@ app.post('/api/admin/orders/bulk-status', requireAdmin, async (req, res) => {
     if (error) {
       return sendDatabaseError(
         res,
-        'Bulk status update ব্যর্থ হয়েছে।',
+        'Bulk status update ব্যর্থ হয়েছে।',
         error
       );
     }
@@ -1448,7 +1525,7 @@ app.post('/api/admin/orders/bulk-status', requireAdmin, async (req, res) => {
   } catch (error) {
     return sendDatabaseError(
       res,
-      'Bulk status update ব্যর্থ হয়েছে।',
+      'Bulk status update ব্যর্থ হয়েছে।',
       error
     );
   }
@@ -1465,7 +1542,7 @@ app.post('/api/admin/cms/update-single', requireAdmin, async (req, res) => {
   if (!field || value === undefined) {
     return res.status(400).json({
       success: false,
-      error: 'CMS field ও value প্রয়োজন।'
+      error: 'CMS field ও value প্রয়োজন।'
     });
   }
 
@@ -1487,7 +1564,7 @@ app.post('/api/admin/cms/update-single', requireAdmin, async (req, res) => {
     if (error) {
       return sendDatabaseError(
         res,
-        'CMS আপডেট করা যায়নি।',
+        'CMS আপডেট করা যায়নি।',
         error
       );
     }
@@ -1508,81 +1585,234 @@ app.post('/api/admin/cms/update-single', requireAdmin, async (req, res) => {
 
 
 // -----------------------------------------------------------------------------
-// ADMIN: UPDATE COMPLETE ORDER
+// ADMIN: PRODUCT MANAGER (ADD / UPDATE / SAFE DELETE)
+// Uses only real columns of the "products" table:
+// name, regular_price, price, image, is_active, sort_order, updated_at
 // -----------------------------------------------------------------------------
 
-app.post('/api/admin/orders/update', requireAdmin, async (req, res) => {
-  const orderId = cleanText(req.body?.order_id, 80);
+function readProductFields(body) {
+  const name = cleanText(body?.name, 250);
+  const price = parseMoney(body?.price);
+  let regularPrice = parseMoney(body?.regular_price);
+  const image = cleanText(body?.image, 2000);
 
-  const customerName = cleanText(
-    req.body?.customer_name,
-    150
-  );
+  if (!name) {
+    return { error: 'প্রোডাক্টের নাম প্রয়োজন।' };
+  }
 
-  const customerPhone = normalizePhone(
-    req.body?.customer_phone
-  );
-
-  const shippingDistrict = cleanText(
-    req.body?.shipping_district,
-    100
-  );
-
-  const shippingAddress = cleanText(
-    req.body?.shipping_address,
-    1000
-  );
-
-  const grandTotal = Number(req.body?.grand_total);
-
-  const orderStatus = cleanText(
-    req.body?.order_status || req.body?.status,
-    30
-  ).toLowerCase();
-
-  const allowedStatuses = [
-    'pending',
-    'confirmed',
-    'processing',
-    'shipped',
-    'delivered',
-    'cancelled'
-  ];
+  // The checkout strips a trailing size such as "(M)" from the product name
+  // before looking it up, so such a name could never be ordered.
+  if (/\s*\((M|L|XL|XXL)\)\s*$/i.test(name)) {
+    return {
+      error: 'প্রোডাক্টের নামের শেষে সাইজ (M/L/XL/XXL) বন্ধনীতে লেখা যাবে না।'
+    };
+  }
 
   if (
-    !orderId ||
-    !customerName ||
-    customerPhone.length !== 11 ||
-    !shippingAddress ||
-    !Number.isFinite(grandTotal) ||
-    grandTotal < 0 ||
-    !allowedStatuses.includes(orderStatus)
+    price === null ||
+    Number.isNaN(price) ||
+    price < 0 ||
+    price > 10000000
   ) {
+    return { error: 'অফার প্রাইস সঠিকভাবে দিন।' };
+  }
+
+  if (regularPrice === null) {
+    regularPrice = price;
+  }
+
+  if (
+    Number.isNaN(regularPrice) ||
+    regularPrice < 0 ||
+    regularPrice > 10000000
+  ) {
+    return { error: 'রেগুলার প্রাইস সঠিকভাবে দিন।' };
+  }
+
+  if (!/^https?:\/\/\S+$/i.test(image)) {
+    return {
+      error: 'ছবির URL সঠিক নয়। এটি http:// অথবা https:// দিয়ে শুরু হতে হবে।'
+    };
+  }
+
+  return {
+    values: {
+      name,
+      price,
+      regular_price: regularPrice,
+      image
+    }
+  };
+}
+
+const PRODUCT_RESPONSE_COLUMNS =
+  'id, name, regular_price, price, image, is_active, sort_order';
+
+app.post('/api/admin/products/add', requireAdmin, async (req, res) => {
+  const { error: validationError, values } = readProductFields(req.body);
+
+  if (validationError) {
     return res.status(400).json({
       success: false,
-      error: 'অর্ডারের তথ্য সঠিকভাবে পূরণ করুন।'
+      error: validationError
     });
   }
 
   try {
+    // The checkout finds products by exact name, so an active product name
+    // must stay unique.
+    const { data: duplicate, error: duplicateError } = await supabase
+      .from('products')
+      .select('id')
+      .eq('name', values.name)
+      .eq('is_active', true)
+      .limit(1);
+
+    if (duplicateError) {
+      return sendDatabaseError(
+        res,
+        'প্রোডাক্টের নাম যাচাই করা যায়নি।',
+        duplicateError
+      );
+    }
+
+    if (duplicate && duplicate.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: 'এই নামে একটি সক্রিয় প্রোডাক্ট আগে থেকেই আছে। আলাদা নাম দিন।'
+      });
+    }
+
+    // Put the new product at the end of the list so it does not replace
+    // the default (first) product on the storefront.
+    const { data: lastProduct, error: sortError } = await supabase
+      .from('products')
+      .select('sort_order')
+      .order('sort_order', { ascending: false })
+      .limit(1);
+
+    if (sortError) {
+      return sendDatabaseError(
+        res,
+        'প্রোডাক্টের ক্রম নির্ধারণ করা যায়নি।',
+        sortError
+      );
+    }
+
+    const nextSortOrder =
+      Number(lastProduct?.[0]?.sort_order || 0) + 1;
+
     const { data, error } = await supabase
-      .from('orders')
-      .update({
-        customer_name: customerName,
-        customer_phone: customerPhone,
-        shipping_district: shippingDistrict,
-        shipping_address: shippingAddress,
-        grand_total: grandTotal,
-        order_status: orderStatus
+      .from('products')
+      .insert({
+        ...values,
+        is_active: true,
+        sort_order: nextSortOrder
       })
-      .eq('id', orderId)
-      .select()
+      .select(PRODUCT_RESPONSE_COLUMNS)
+      .single();
+
+    if (error) {
+      return sendDatabaseError(
+        res,
+        'প্রোডাক্ট যোগ করা যায়নি।',
+        error
+      );
+    }
+
+    return res.status(201).json({
+      success: true,
+      product: data
+    });
+
+  } catch (error) {
+    return sendDatabaseError(
+      res,
+      'প্রোডাক্ট যোগ করা যায়নি।',
+      error
+    );
+  }
+});
+
+
+app.post('/api/admin/products/update', requireAdmin, async (req, res) => {
+  const productId = cleanText(req.body?.id, 80);
+
+  if (!isUuid(productId)) {
+    return res.status(400).json({
+      success: false,
+      error: 'সঠিক Product ID প্রয়োজন।'
+    });
+  }
+
+  const { error: validationError, values } = readProductFields(req.body);
+
+  if (validationError) {
+    return res.status(400).json({
+      success: false,
+      error: validationError
+    });
+  }
+
+  try {
+    const { data: existing, error: lookupError } = await supabase
+      .from('products')
+      .select('id')
+      .eq('id', productId)
+      .maybeSingle();
+
+    if (lookupError) {
+      return sendDatabaseError(
+        res,
+        'প্রোডাক্ট যাচাই করা যায়নি।',
+        lookupError
+      );
+    }
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found.'
+      });
+    }
+
+    const { data: duplicate, error: duplicateError } = await supabase
+      .from('products')
+      .select('id')
+      .eq('name', values.name)
+      .eq('is_active', true)
+      .neq('id', productId)
+      .limit(1);
+
+    if (duplicateError) {
+      return sendDatabaseError(
+        res,
+        'প্রোডাক্টের নাম যাচাই করা যায়নি।',
+        duplicateError
+      );
+    }
+
+    if (duplicate && duplicate.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: 'এই নামে আরেকটি সক্রিয় প্রোডাক্ট আছে। আলাদা নাম দিন।'
+      });
+    }
+
+    const { data, error } = await supabase
+      .from('products')
+      .update({
+        ...values,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', productId)
+      .select(PRODUCT_RESPONSE_COLUMNS)
       .maybeSingle();
 
     if (error) {
       return sendDatabaseError(
         res,
-        'অর্ডারের তথ্য আপডেট করা যায়নি।',
+        'প্রোডাক্ট আপডেট করা যায়নি।',
         error
       );
     }
@@ -1590,23 +1820,565 @@ app.post('/api/admin/orders/update', requireAdmin, async (req, res) => {
     if (!data) {
       return res.status(404).json({
         success: false,
-        error: 'Order not found.'
+        error: 'Product not found.'
       });
     }
 
     return res.json({
       success: true,
-      order: data
+      product: data
     });
 
   } catch (error) {
     return sendDatabaseError(
       res,
-      'অর্ডার আপডেট করা যায়নি।',
+      'প্রোডাক্ট আপডেট করা যায়নি।',
       error
     );
   }
 });
+
+
+// Soft delete: the row is kept (is_active = false) so old orders and
+// order_items keep their product data.
+app.post('/api/admin/products/delete', requireAdmin, async (req, res) => {
+  const productId = cleanText(req.body?.id, 80);
+
+  if (!isUuid(productId)) {
+    return res.status(400).json({
+      success: false,
+      error: 'সঠিক Product ID প্রয়োজন।'
+    });
+  }
+
+  try {
+    const { data: product, error: lookupError } = await supabase
+      .from('products')
+      .select('id, is_active')
+      .eq('id', productId)
+      .maybeSingle();
+
+    if (lookupError) {
+      return sendDatabaseError(
+        res,
+        'প্রোডাক্ট যাচাই করা যায়নি।',
+        lookupError
+      );
+    }
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found.'
+      });
+    }
+
+    if (product.is_active === false) {
+      return res.json({
+        success: true,
+        already_inactive: true
+      });
+    }
+
+    // Never remove the last active product: the storefront would be left
+    // with nothing that can be ordered.
+    const { data: others, error: othersError } = await supabase
+      .from('products')
+      .select('id')
+      .eq('is_active', true)
+      .neq('id', productId)
+      .limit(1);
+
+    if (othersError) {
+      return sendDatabaseError(
+        res,
+        'প্রোডাক্ট যাচাই করা যায়নি।',
+        othersError
+      );
+    }
+
+    if (!others || others.length === 0) {
+      return res.status(409).json({
+        success: false,
+        error: 'এটি শেষ সক্রিয় প্রোডাক্ট, তাই মুছে ফেলা যাবে না। আগে আরেকটি প্রোডাক্ট যোগ করুন।'
+      });
+    }
+
+    const { error } = await supabase
+      .from('products')
+      .update({
+        is_active: false,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', productId);
+
+    if (error) {
+      return sendDatabaseError(
+        res,
+        'প্রোডাক্ট মুছে ফেলা যায়নি।',
+        error
+      );
+    }
+
+    return res.json({
+      success: true
+    });
+
+  } catch (error) {
+    return sendDatabaseError(
+      res,
+      'প্রোডাক্ট মুছে ফেলা যায়নি।',
+      error
+    );
+  }
+});
+
+
+// -----------------------------------------------------------------------------
+// ADMIN: UPDATE COMPLETE ORDER
+// One shared handler is used by BOTH:
+//   POST /api/admin/orders/update        (original endpoint, kept)
+//   POST /api/admin/orders/update-full   (endpoint the Admin Panel calls)
+//
+// Request body:
+//   order_id, customer_name, customer_phone, shipping_district,
+//   shipping_address, order_status
+//   items (optional): [{ id, quantity }, { id, remove: true }]
+//   preview (optional, true): calculate and return the totals, save nothing
+//
+// Totals are recalculated ONLY when items or the delivery area changed, using
+// the stored order_items.unit_price and the same discount / delivery rules as
+// /api/checkout. A grand_total sent by the client is never trusted.
+// -----------------------------------------------------------------------------
+
+const ORDER_UPDATE_STATUSES = [
+  'pending',
+  'confirmed',
+  'processing',
+  'shipped',
+  'delivered',
+  'cancelled'
+];
+
+// Same formula as the pricing section of /api/checkout:
+// 2 pieces = 100 discount, 3+ pieces = 250 discount,
+// delivery is free from free_delivery_min_quantity pieces.
+function calculateOrderPricing(items, shippingDistrict, settings) {
+  const totalQuantity = items.reduce(
+    (sum, item) => sum + item.quantity,
+    0
+  );
+
+  const subtotal = items.reduce(
+    (sum, item) => sum + item.unit_price * item.quantity,
+    0
+  );
+
+  const discount = totalQuantity === 2
+    ? 100
+    : totalQuantity >= 3
+      ? 250
+      : 0;
+
+  let deliveryCharge = isDhakaDistrict(shippingDistrict)
+    ? Number(settings.inside_dhaka_charge ?? 60)
+    : Number(settings.outside_dhaka_charge ?? 120);
+
+  const freeDeliveryMinimum = Number(
+    settings.free_delivery_min_quantity ?? 3
+  );
+
+  if (totalQuantity >= freeDeliveryMinimum) {
+    deliveryCharge = 0;
+  }
+
+  const grandTotal = Math.max(
+    0,
+    subtotal - discount + deliveryCharge
+  );
+
+  return {
+    totalQuantity,
+    subtotal,
+    discount,
+    deliveryCharge,
+    grandTotal
+  };
+}
+
+async function handleOrderUpdate(req, res) {
+  const body = req.body || {};
+  const preview = body.preview === true;
+
+  const orderId = cleanText(body.order_id, 80);
+  const customerName = cleanText(body.customer_name, 150);
+  const customerPhone = normalizePhone(body.customer_phone);
+  const shippingDistrict = cleanText(body.shipping_district, 100);
+  const shippingAddress = cleanText(body.shipping_address, 1000);
+
+  let orderStatus = cleanText(
+    body.order_status || body.status,
+    30
+  ).toLowerCase();
+
+  // The Admin Panel shows "new" as a label; the database stores "pending".
+  if (orderStatus === 'new') orderStatus = 'pending';
+
+  if (!isUuid(orderId)) {
+    return res.status(400).json({
+      success: false,
+      error: 'সঠিক Order ID প্রয়োজন।'
+    });
+  }
+
+  if (!shippingDistrict) {
+    return res.status(400).json({
+      success: false,
+      error: 'ডেলিভারি জেলা নির্বাচন করুন।'
+    });
+  }
+
+  if (
+    !preview &&
+    (
+      !customerName ||
+      customerPhone.length !== 11 ||
+      !shippingAddress ||
+      !ORDER_UPDATE_STATUSES.includes(orderStatus)
+    )
+  ) {
+    return res.status(400).json({
+      success: false,
+      error: 'অর্ডারের তথ্য সঠিকভাবে পূরণ করুন।'
+    });
+  }
+
+  // Optional item changes
+
+  const itemChanges = new Map();
+
+  if (body.items !== undefined) {
+    if (!Array.isArray(body.items) || body.items.length > 100) {
+      return res.status(400).json({
+        success: false,
+        error: 'অর্ডারের পণ্যের তালিকা সঠিক নয়।'
+      });
+    }
+
+    for (const entry of body.items) {
+      const itemId = cleanText(entry?.id, 80);
+      const remove = entry?.remove === true;
+
+      if (!isUuid(itemId) || itemChanges.has(itemId)) {
+        return res.status(400).json({
+          success: false,
+          error: 'অর্ডারের পণ্যের ID সঠিক নয়।'
+        });
+      }
+
+      let quantity = null;
+
+      if (!remove) {
+        quantity = Number(entry?.quantity);
+
+        if (
+          !Number.isInteger(quantity) ||
+          quantity < 1 ||
+          quantity > 50
+        ) {
+          return res.status(400).json({
+            success: false,
+            error: 'পণ্যের পরিমাণ ১ থেকে ৫০ এর মধ্যে হতে হবে।'
+          });
+        }
+      }
+
+      itemChanges.set(itemId, { remove, quantity });
+    }
+  }
+
+  try {
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', orderId)
+      .maybeSingle();
+
+    if (orderError) {
+      return sendDatabaseError(
+        res,
+        'অর্ডার যাচাই করা যায়নি।',
+        orderError
+      );
+    }
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found.'
+      });
+    }
+
+    const { data: currentItems, error: itemsError } = await supabase
+      .from('order_items')
+      .select('id, quantity, unit_price, total_price')
+      .eq('order_id', orderId);
+
+    if (itemsError) {
+      return sendDatabaseError(
+        res,
+        'অর্ডারের পণ্য লোড করা যায়নি।',
+        itemsError
+      );
+    }
+
+    const existingItems = currentItems || [];
+    const existingIds = new Set(existingItems.map(item => item.id));
+
+    for (const itemId of itemChanges.keys()) {
+      if (!existingIds.has(itemId)) {
+        return res.status(400).json({
+          success: false,
+          error: 'এই পণ্যটি এই অর্ডারে পাওয়া যায়নি।'
+        });
+      }
+    }
+
+    // Apply the requested item changes in memory
+
+    const removeIds = [];
+    const itemUpdates = [];
+    const finalItems = [];
+
+    for (const item of existingItems) {
+      const change = itemChanges.get(item.id);
+      const unitPrice = Number(item.unit_price || 0);
+
+      if (change?.remove) {
+        removeIds.push(item.id);
+        continue;
+      }
+
+      const quantity =
+        change && change.quantity !== null
+          ? change.quantity
+          : Number(item.quantity);
+
+      if (quantity !== Number(item.quantity)) {
+        itemUpdates.push({
+          id: item.id,
+          quantity,
+          total_price: unitPrice * quantity
+        });
+      }
+
+      finalItems.push({
+        unit_price: unitPrice,
+        quantity
+      });
+    }
+
+    if (existingItems.length > 0 && finalItems.length < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'অর্ডারে অন্তত একটি পণ্য থাকতে হবে। পুরো অর্ডার বাতিল বা ডিলিট করতে চাইলে সেই অপশন ব্যবহার করুন।'
+      });
+    }
+
+    const itemsChanged =
+      removeIds.length > 0 || itemUpdates.length > 0;
+
+    const districtChanged =
+      shippingDistrict !== cleanText(order.shipping_district, 100);
+
+    const needsRecalculation =
+      existingItems.length > 0 && (itemsChanged || districtChanged);
+
+    let pricing = {
+      totalQuantity: finalItems.reduce(
+        (sum, item) => sum + item.quantity,
+        0
+      ),
+      subtotal: Number(order.subtotal || 0),
+      discount: Number(order.discount || 0),
+      deliveryCharge: Number(order.delivery_charge || 0),
+      grandTotal: Number(order.grand_total || 0)
+    };
+
+    if (needsRecalculation) {
+      const { data: deliverySettings, error: deliveryError } =
+        await supabase
+          .from('delivery_settings')
+          .select(`
+            inside_dhaka_charge,
+            outside_dhaka_charge,
+            free_delivery_min_quantity
+          `)
+          .eq('id', 1)
+          .maybeSingle();
+
+      if (deliveryError) {
+        return sendDatabaseError(
+          res,
+          'ডেলিভারি চার্জ পাওয়া যায়নি।',
+          deliveryError
+        );
+      }
+
+      pricing = calculateOrderPricing(
+        finalItems,
+        shippingDistrict,
+        deliveryError ? {} : (deliverySettings || {})
+      );
+    }
+
+    if (preview) {
+      return res.json({
+        success: true,
+        preview: {
+          total_quantity: pricing.totalQuantity,
+          subtotal: pricing.subtotal,
+          discount: pricing.discount,
+          delivery_charge: pricing.deliveryCharge,
+          grand_total: pricing.grandTotal,
+          recalculated: needsRecalculation
+        }
+      });
+    }
+
+    const orderFields = {
+      customer_name: customerName,
+      customer_phone: customerPhone,
+      shipping_district: shippingDistrict,
+      shipping_address: shippingAddress,
+      order_status: orderStatus
+    };
+
+    if (needsRecalculation) {
+      orderFields.subtotal = pricing.subtotal;
+      orderFields.discount = pricing.discount;
+      orderFields.delivery_charge = pricing.deliveryCharge;
+      orderFields.grand_total = pricing.grandTotal;
+    }
+
+    if (itemsChanged) {
+      // Item removal / quantity change and the order totals are saved in ONE
+      // database transaction (see the SQL migration).
+      const { error: rpcError } = await supabase.rpc(
+        'admin_apply_order_update',
+        {
+          p_order_id: orderId,
+          p_order: orderFields,
+          p_remove_item_ids: removeIds,
+          p_item_updates: itemUpdates
+        }
+      );
+
+      if (rpcError) {
+        const message = String(rpcError.message || '');
+
+        if (message.includes('ORDER_NOT_FOUND')) {
+          return res.status(404).json({
+            success: false,
+            error: 'Order not found.'
+          });
+        }
+
+        if (message.includes('ORDER_MUST_HAVE_ITEMS')) {
+          return res.status(400).json({
+            success: false,
+            error: 'অর্ডারে অন্তত একটি পণ্য থাকতে হবে।'
+          });
+        }
+
+        if (
+          rpcError.code === 'PGRST202' ||
+          rpcError.code === '42883' ||
+          /could not find the function/i.test(message)
+        ) {
+          console.error(
+            'admin_apply_order_update function is missing:',
+            message
+          );
+
+          return res.status(500).json({
+            success: false,
+            error: 'অর্ডারের পণ্য আপডেট করতে Supabase SQL Migration (admin_apply_order_update) চালানো হয়নি।'
+          });
+        }
+
+        return sendDatabaseError(
+          res,
+          'অর্ডারের তথ্য আপডেট করা যায়নি।',
+          rpcError
+        );
+      }
+
+    } else {
+      const { error: updateError } = await supabase
+        .from('orders')
+        .update({
+          ...orderFields,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', orderId);
+
+      if (updateError) {
+        return sendDatabaseError(
+          res,
+          'অর্ডারের তথ্য আপডেট করা যায়নি।',
+          updateError
+        );
+      }
+    }
+
+    // Return the saved order exactly as it is now in the database
+
+    const { data: savedOrder, error: savedError } = await supabase
+      .from('orders')
+      .select('*, order_items(*)')
+      .eq('id', orderId)
+      .maybeSingle();
+
+    if (savedError || !savedOrder) {
+      return sendDatabaseError(
+        res,
+        'আপডেট হওয়া অর্ডার লোড করা যায়নি।',
+        savedError || new Error('Updated order not found')
+      );
+    }
+
+    const response = {
+      success: true,
+      order: savedOrder,
+      recalculated: needsRecalculation
+    };
+
+    // A total sent by the client is not used. Tell the caller if it differs
+    // from the total the server actually saved.
+    const clientTotal = parseMoney(body.grand_total);
+
+    if (
+      clientTotal !== null &&
+      Number.isFinite(clientTotal) &&
+      clientTotal !== Number(savedOrder.grand_total)
+    ) {
+      response.client_total_ignored = true;
+    }
+
+    return res.json(response);
+
+  } catch (error) {
+    return sendDatabaseError(
+      res,
+      'অর্ডার আপডেট করা যায়নি।',
+      error
+    );
+  }
+}
+
+app.post('/api/admin/orders/update', requireAdmin, handleOrderUpdate);
+app.post('/api/admin/orders/update-full', requireAdmin, handleOrderUpdate);
 
 
 // -----------------------------------------------------------------------------
@@ -1622,7 +2394,7 @@ app.post('/api/admin/orders/delete', requireAdmin, async (req, res) => {
   ) {
     return res.status(400).json({
       success: false,
-      error: 'সঠিক Order ID প্রয়োজন।'
+      error: 'সঠিক Order ID প্রয়োজন।'
     });
   }
 
@@ -1639,7 +2411,7 @@ app.post('/api/admin/orders/delete', requireAdmin, async (req, res) => {
     if (lookupError) {
       return sendDatabaseError(
         res,
-        'Order যাচাই করা যায়নি।',
+        'Order যাচাই করা যায়নি।',
         lookupError
       );
     }
@@ -1661,7 +2433,7 @@ app.post('/api/admin/orders/delete', requireAdmin, async (req, res) => {
     if (itemsError) {
       return sendDatabaseError(
         res,
-        'Order items মুছে ফেলা যায়নি।',
+        'Order items মুছে ফেলা যায়নি।',
         itemsError
       );
     }
@@ -1676,7 +2448,7 @@ app.post('/api/admin/orders/delete', requireAdmin, async (req, res) => {
     if (deleteError) {
       return sendDatabaseError(
         res,
-        'Order মুছে ফেলা যায়নি।',
+        'Order মুছে ফেলা যায়নি।',
         deleteError
       );
     }
@@ -1697,15 +2469,236 @@ app.post('/api/admin/orders/delete', requireAdmin, async (req, res) => {
 
 
 // -----------------------------------------------------------------------------
-// ADMIN: GOOD CUSTOMER API
-// NOTE: Original database schema does not contain a good-customer flag.
+// ADMIN: GOOD CUSTOMER MANAGEMENT
+// Requires the SQL migration that adds customers.is_good_customer and
+// customers.good_customer_at.
 // -----------------------------------------------------------------------------
 
+function isMissingGoodCustomerColumn(error) {
+  const message = String(error?.message || '');
+
+  return (
+    message.includes('is_good_customer') ||
+    message.includes('good_customer_at')
+  );
+}
+
+const GOOD_CUSTOMER_MIGRATION_MESSAGE =
+  'Good Customer সুবিধার জন্য Supabase SQL Migration চালানো হয়নি।';
+
+app.post('/api/admin/customers/mark-good', requireAdmin, async (req, res) => {
+  const customerName = cleanText(req.body?.customer_name, 150);
+  const customerPhone = normalizePhone(req.body?.customer_phone);
+
+  // is_good: false removes the Good Customer mark; anything else adds it.
+  const markGood = req.body?.is_good !== false;
+
+  if (customerPhone.length !== 11) {
+    return res.status(400).json({
+      success: false,
+      error: 'সঠিক ১১ ডিজিটের মোবাইল নম্বর প্রয়োজন।'
+    });
+  }
+
+  try {
+    const { data: existing, error: lookupError } = await supabase
+      .from('customers')
+      .select('id, is_good_customer')
+      .eq('customer_phone', customerPhone);
+
+    if (lookupError) {
+      if (isMissingGoodCustomerColumn(lookupError)) {
+        return res.status(500).json({
+          success: false,
+          error: GOOD_CUSTOMER_MIGRATION_MESSAGE
+        });
+      }
+
+      return sendDatabaseError(
+        res,
+        'কাস্টমার যাচাই করা যায়নি।',
+        lookupError
+      );
+    }
+
+    const rows = existing || [];
+
+    if (
+      rows.length > 0 &&
+      rows.every(row => row.is_good_customer === markGood)
+    ) {
+      return res.json({
+        success: true,
+        already: true,
+        is_good: markGood,
+        message: markGood
+          ? 'এই কাস্টমার আগে থেকেই Good Customer তালিকায় আছে।'
+          : 'এই কাস্টমার Good Customer তালিকায় নেই।'
+      });
+    }
+
+    const goodFields = {
+      is_good_customer: markGood,
+      good_customer_at: markGood ? new Date().toISOString() : null
+    };
+
+    let created = false;
+
+    if (rows.length === 0) {
+      if (!markGood) {
+        return res.status(404).json({
+          success: false,
+          error: 'Customer not found.'
+        });
+      }
+
+      if (!customerName) {
+        return res.status(400).json({
+          success: false,
+          error: 'কাস্টমারের নাম প্রয়োজন।'
+        });
+      }
+
+      const { error: insertError } = await supabase
+        .from('customers')
+        .insert({
+          customer_name: customerName,
+          customer_phone: customerPhone,
+          ...goodFields
+        });
+
+      if (!insertError) {
+        created = true;
+      } else if (insertError.code !== '23505') {
+        return sendDatabaseError(
+          res,
+          'কাস্টমার সংরক্ষণ করা যায়নি।',
+          insertError
+        );
+      }
+      // 23505 = another request created the same phone first; update it below.
+    }
+
+    if (!created) {
+      const { error: updateError } = await supabase
+        .from('customers')
+        .update(goodFields)
+        .eq('customer_phone', customerPhone);
+
+      if (updateError) {
+        return sendDatabaseError(
+          res,
+          'Good Customer স্ট্যাটাস আপডেট করা যায়নি।',
+          updateError
+        );
+      }
+    }
+
+    return res.json({
+      success: true,
+      is_good: markGood,
+      message: markGood
+        ? 'Good Customer হিসেবে যোগ হয়েছে।'
+        : 'Good Customer তালিকা থেকে সরানো হয়েছে।'
+    });
+
+  } catch (error) {
+    return sendDatabaseError(
+      res,
+      'Good Customer স্ট্যাটাস আপডেট করা যায়নি।',
+      error
+    );
+  }
+});
+
+
 app.get('/api/admin/good-customers', requireAdmin, async (req, res) => {
-  return res.status(501).json({
-    success: false,
-    error: 'Good customer API এখনো implement করা হয়নি।'
-  });
+  try {
+    const { data: customers, error } = await supabase
+      .from('customers')
+      .select('id, customer_name, customer_phone, good_customer_at')
+      .eq('is_good_customer', true)
+      .order('good_customer_at', { ascending: false, nullsFirst: false })
+      .limit(500);
+
+    if (error) {
+      if (isMissingGoodCustomerColumn(error)) {
+        return res.status(500).json({
+          success: false,
+          error: GOOD_CUSTOMER_MIGRATION_MESSAGE
+        });
+      }
+
+      return sendDatabaseError(
+        res,
+        'Good Customer তালিকা লোড করা যায়নি।',
+        error
+      );
+    }
+
+    const list = customers || [];
+
+    // Live totals from the orders table (cancelled orders are not counted),
+    // so edits, cancellations and deletions are always reflected.
+    const totals = new Map();
+    const phones = [...new Set(list.map(c => c.customer_phone))];
+
+    for (let index = 0; index < phones.length; index += 50) {
+      const chunk = phones.slice(index, index + 50);
+
+      const { data: orderRows, error: ordersError } = await supabase
+        .from('orders')
+        .select('customer_phone, grand_total, order_status')
+        .in('customer_phone', chunk);
+
+      if (ordersError) {
+        return sendDatabaseError(
+          res,
+          'Good Customer-এর অর্ডার হিসাব লোড করা যায়নি।',
+          ordersError
+        );
+      }
+
+      for (const row of orderRows || []) {
+        if (String(row.order_status || '').toLowerCase() === 'cancelled') {
+          continue;
+        }
+
+        const entry = totals.get(row.customer_phone) || {
+          orders: 0,
+          spent: 0
+        };
+
+        entry.orders += 1;
+        entry.spent += Number(row.grand_total || 0);
+        totals.set(row.customer_phone, entry);
+      }
+    }
+
+    return res.json({
+      success: true,
+      count: list.length,
+      customers: list.map(customer => {
+        const entry = totals.get(customer.customer_phone);
+
+        return {
+          id: customer.id,
+          customer_name: customer.customer_name,
+          customer_phone: customer.customer_phone,
+          total_orders: entry ? entry.orders : 0,
+          total_spent: entry ? entry.spent : 0,
+          good_customer_at: customer.good_customer_at
+        };
+      })
+    });
+
+  } catch (error) {
+    return sendDatabaseError(
+      res,
+      'Good Customer তালিকা লোড করা যায়নি।',
+      error
+    );
+  }
 });
 
 // -----------------------------------------------------------------------------
@@ -1715,7 +2708,7 @@ app.get('/api/admin/good-customers', requireAdmin, async (req, res) => {
 app.use((req, res) => {
   return res.status(404).json({
     success: false,
-    error: 'API endpoint পাওয়া যায়নি।'
+    error: 'API endpoint পাওয়া যায়নি।'
   });
 });
 
@@ -1747,7 +2740,7 @@ app.use((error, req, res, next) => {
 
   return res.status(500).json({
     success: false,
-    error: 'সার্ভারে একটি সমস্যা হয়েছে।'
+    error: 'সার্ভারে একটি সমস্যা হয়েছে।'
   });
 });
 
